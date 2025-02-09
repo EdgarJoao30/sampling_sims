@@ -1,13 +1,32 @@
 ---
-title: "Spatial Simulations with Shiny"
-output: 
-  html_document:
-    self_contained: false
-    runtime: shiny
+title: "spatial"
+format: 
+  html:
+    page-layout: custom
+server: shiny
 ---
 
+```{r}
+#| panel: sidebar
+sliderInput("coff", "coff:", min = 1000, max = 10000, value = 1000)
+sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000))
+sliderInput("range", "range:", min = 10, max = 1000, value = 10)
+sliderInput("k", "k:", min = 1, max = 12, value = 12)
+sliderInput("month", "month:", min = 1, max = 12, value = 12)
+sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
+sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
+
+```
+
+```{r}
+#| panel: fill
+plotOutput("meshplot")
+plotOutput("grfplot")
+```
 
 ```{r, include = FALSE}
+#| context: server
+
 library(INLA)
 library(inlabru)
 library(fmesher)
@@ -17,9 +36,7 @@ library(tidyverse)
 library(tidyterra)
 library(stars)
 library(raster)
-```
 
-```{r, include = FALSE}
 wd <- '~/OneDrive - University of Glasgow/PhD/0_simulations'
 boundary <- st_read(paste0(wd, '/data/20240312_ROI_4326.shp')) |> 
   st_union() |> 
@@ -38,9 +55,7 @@ df$class <- factor(df$Landcover_AllClass)
 df$class <- plyr::revalue(df$class, c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
 df$class <- relevel(factor(df$class), ref = "Primary")
 df_sf <- st_as_sf(df, coords = c('x', 'y'), crs = 32650)
-```
 
-```{r, include = FALSE}
 k = 12
 rho = 0.3
 beta <- c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377)
@@ -52,24 +67,7 @@ n <- 12
 kappa <- sqrt(8 * (alpha - 1)) / range
 theta <- c(-0.5 * log(4 * pi * variance * kappa^2), log(kappa))
 seed <- 1234
-```
 
-
-Column {.sidebar}
---------------------------------------------------
-
-```{r}
-sliderInput("coff", "coff:", min = 1000, max = 10000, value = 1000)
-sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000))
-sliderInput("range", "range:", min = 10, max = 1000, value = 10)
-sliderInput("k", "k:", min = 1, max = 12, value = 12)
-sliderInput("month", "month:", min = 1, max = 12, value = 12)
-sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
-sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
-```
-
-```{r, include = FALSE}
-# Define server logic
 simple_mesh <- reactive({
     max_edge <- input$mx_edge
     coff <- input$coff
@@ -78,11 +76,7 @@ simple_mesh <- reactive({
     mesh <- fm_mesh_2d(df_sf, max.edge = as.numeric(max_edge), cutoff = as.numeric(coff))
     mesh
   })
-```
 
-```{r, include = FALSE}
-  # Reactive expression to create the spatial field
-  
 spatial_field <- reactive({
   k <- input$k
   rho <- input$rho
@@ -110,21 +104,15 @@ spatial_field <- reactive({
   
   df_sf
 })
-```
 
-Column
---------------------------------------------------
 
-```{r}
-renderPlot({
+output$meshplot <- renderPlot({
   mesh <- simple_mesh()
   ggplot() +
     geom_fm(data = mesh)
 })
-```
 
-```{r}
-renderPlot({
+output$grfplot <- renderPlot({
   month <- input$month
   df_sf <- spatial_field()
   ggplot() +
@@ -137,5 +125,4 @@ renderPlot({
 })
 
 ```
-
 

@@ -1,0 +1,11 @@
+name: "Spatial Simulations"
+output_dir: "docs"
+navbar:
+  title: "Spatial Simulations"
+  left:
+    - text: "Home"
+      href: index.html
+output:
+  html_document:
+    self_contained: false
+    runtime: shiny

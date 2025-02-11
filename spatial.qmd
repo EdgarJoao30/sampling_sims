@@ -1,0 +1,169 @@
+---
+title: "spatial"
+format: 
+  html:
+    page-layout: custom
+server: shiny
+---
+
+```{r}
+#| panel: sidebar
+sliderInput("coff", "coff:", min = 1000, max = 10000, value = 1000)
+sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000))
+sliderInput("range", "range:", min = 1000, max = 5000, value = 3000)
+sliderInput("month", "month:", min = 1, max = 12, value = 1)
+sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
+sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
+
+```
+
+```{r}
+#| panel: fill
+#| layout: "[ [1,1], [1,1] ]"
+
+plotOutput("meshplot")
+plotOutput("lcplot")
+
+plotOutput("grfplot") 
+plotOutput("simplot")
+```
+
+
+```{r, include = FALSE}
+#| context: server
+
+library(INLA)
+library(inlabru)
+library(fmesher)
+library(sf)
+library(terra)
+library(tidyverse)
+library(tidyterra)
+library(stars)
+library(raster)
+
+wd <- '~/OneDrive - University of Glasgow/PhD/0_simulations'
+boundary <- st_read(paste0(wd, '/data/20240312_ROI_4326.shp')) |> 
+  st_union() |> 
+  st_transform(crs = 32650)
+boundary_sp <- as(boundary, "Spatial")
+# Land cover
+landcover <- rast(paste0(wd, '/data/Landcover_AllClass.tif')) %>% project(crs(boundary)) %>% raster::crop(boundary)
+boundary_extent <- extent(boundary_sp)
+empty_raster <- raster(boundary_extent, res = 500, crs = crs(boundary_sp))
+aligned_landcover <- terra::resample(landcover, rast(empty_raster), method = "near")
+mask <- rasterize(vect(boundary), aligned_landcover)
+hab_mask <- terra::mask(aligned_landcover, mask)
+hab_mask <- hab_mask %>% filter(Landcover_AllClass < 99)
+df <- as.data.frame(hab_mask, xy=T)
+df$class <- factor(df$Landcover_AllClass)
+df$class <- plyr::revalue(df$class, c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
+df$class <- relevel(factor(df$class), ref = "Primary")
+df_sf <- st_as_sf(df, coords = c('x', 'y'), crs = 32650)
+
+k = 12
+# rho = 0.3
+beta <- c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377)
+# sigma <- 0.5
+# variance <- sigma^2
+alpha <- 2
+# range <- 1
+# kappa <- sqrt(8 * (alpha - 1)) / range
+# theta <- c(-0.5 * log(4 * pi * variance * kappa^2), log(kappa))
+seed <- 1234
+
+simple_mesh <- reactive({
+    max_edge <- input$mx_edge
+    coff <- input$coff
+    mesh <- fm_mesh_2d(df_sf, max.edge = as.numeric(max_edge), cutoff = as.numeric(coff))
+    mesh
+  })
+
+spatial_field <- reactive({
+  rho <- input$rho
+  sigma <- input$sigma
+  range <- input$range
+  
+  variance <- sigma^2
+  kappa <- sqrt(8 * (alpha - 1)) / range
+  theta <- c(-0.5 * log(4 * pi * variance * kappa^2), log(kappa))
+  seed <- 1234
+  
+  boundary_sp <- as(boundary, "Spatial")
+  mask <- rasterize(vect(boundary), aligned_landcover)
+  mesh <- simple_mesh()
+  spde <- inla.spde2.matern(mesh, alpha = alpha)
+  Q <- inla.spde2.precision(spde, theta = theta)
+  
+  true_field <- inla.qsample(k, Q, seed = seed)
+  df_sf$field <- fm_evaluate(mesh, loc = df_sf, field = true_field)
+  
+  df_sf$field_AR1 <- df_sf$field 
+  for (j in 2:k) {
+    df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+  }
+  
+  df_sf
+})
+
+
+sim <- reactive({
+    sp_field <- spatial_field()
+    ccov <- factor(replicate(12, sp_field$class))
+    n <- nrow(df)
+    sd.mu <- 0.001
+    mu <- beta[unclass(ccov)] + sp_field$field_AR1 + rnorm(n * k, 0, sd.mu)
+    sp_field$mu <- exp(mu)
+    generate_binomial <- function(x) {
+      rnbinom(mu= x, n=1, size=10) #### FLAG 2 - Change to poisson, to prevent competition with previous terms
+    }
+    binomial_sample <- apply(sp_field$mu, c(1, 2), generate_binomial)
+    sp_field$mosq <- binomial_sample
+    sp_field$mosq[is.na(sp_field$mosq)] <- 0 # SEE WHY THE NAs
+    sp_field
+  })
+
+output$meshplot <- renderPlot({
+  mesh <- simple_mesh()
+  ggplot() +
+    geom_fm(data = mesh)
+})
+
+output$lcplot <- renderPlot({
+  ggplot() +
+    geom_spatraster(data = as.factor(hab_mask)) +
+    scale_fill_manual(values = c('#9fa86a', 'green', 'darkgreen', '#def016', 'gray')) +
+    ggtitle('Land cover')+
+    labs(fill = 'Value', x='', y='')+
+    theme_minimal()+
+    theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+})
+
+output$grfplot <- renderPlot({
+  month <- input$month
+  gf <- spatial_field()
+  ggplot() +
+    gg(gf, aes(fill = field_AR1[,month]), geom = "tile") +
+    ggtitle('GMRF')+
+    labs(fill = 'Value', x='', y='')+
+    theme_minimal()+
+    scale_fill_gradient(low = "white", high = "blue")+
+    theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+})
+
+output$simplot <- renderPlot({
+  month <- input$month
+  sim <- sim()
+  ggplot() +
+    gg(sim, aes(fill = mosq[,month]), geom = "tile") +
+    ggtitle('Anopheles count')+
+    labs(fill = 'Value', x='', y='')+
+    theme_minimal()+
+    scale_fill_gradient(low = "white", high = "red")+
+    theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+})
+
+
+
+```
+

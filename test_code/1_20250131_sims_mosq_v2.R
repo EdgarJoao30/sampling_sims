@@ -21,6 +21,7 @@ aligned_landcover <- terra::resample(landcover, rast(empty_raster), method = "ne
 mask <- rasterize(vect(boundary), aligned_landcover)
 hab_mask <- terra::mask(aligned_landcover, mask)
 hab_mask <- hab_mask %>% filter(Landcover_AllClass < 99)
+hab_mask <- round(hab_mask)
 df <- as.data.frame(hab_mask, xy=T)
 df$class <- factor(df$Landcover_AllClass)
 df$class <- plyr::revalue(df$class, c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
@@ -34,21 +35,23 @@ beta <- c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377)
 sigma <- 0.5
 variance <- sigma^2
 alpha <- 2
-range <- 1
+range <- 3000
 n <- 12
 kappa <- sqrt(8 * (alpha - 1)) / range
 theta <- c(-0.5 * log(4 * pi * variance * kappa^2), log(kappa))
+seed <- 1234
+sd_mu <- 0.001
 
 generate_data <- function(boundary,
                           aligned_landcover,
                           df_sf, 
-                          seed = 1234, 
-                          alpha = 2, 
-                          theta = c(-1.61, 1.04), 
-                          rho = 0.3, 
-                          beta = c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377), 
-                          k = 12, 
-                          sd_mu = 0.001) {
+                          seed = seed, 
+                          alpha = alpha, 
+                          theta = theta, 
+                          rho = rho, 
+                          beta = beta, 
+                          k = k, 
+                          sd_mu = sd_mu) {
   boundary_sp <- as(boundary, "Spatial")
   mask <- rasterize(vect(boundary), aligned_landcover)
   # Mesh and true surface, units = meters
@@ -70,7 +73,6 @@ generate_data <- function(boundary,
   ccov <- factor(replicate(k, df_sf$class))
   n <- nrow(df)
   mu <- beta[unclass(ccov)] + df_sf$field_AR1 + rnorm(n * k, 0, sd_mu)
-  
   df_sf$mu <- exp(mu)
   
   generate_binomial <- function(x) {
@@ -80,10 +82,10 @@ generate_data <- function(boundary,
   binomial_sample <- apply(df_sf$mu, c(1, 2), generate_binomial)
   
   df_sf$mosq <- binomial_sample
-  df_sf$mosq[is.na(df_sf$mosq)] <- 0
+  # df_sf$mosq[is.na(df_sf$mosq)] <- 0
   
   
-  df2 <- cbind(df_sf, as.data.frame(df_sf$mosq)) %>% select(sample.1:sample.12)
+  df2 <- cbind(df_sf, as.data.frame(df_sf$mosq)) %>% dplyr::select(sample.1:sample.12)
   # Convert df_sf to raster
   df_raster <- st_rasterize(df2)
   df_raster_terra <- rast(df_raster)
@@ -94,7 +96,16 @@ generate_data <- function(boundary,
 }
 
 # Example usage:
-result <- generate_data(boundary, aligned_landcover, df_sf)
+result <- generate_data(boundary,
+                        aligned_landcover,
+                        df_sf, 
+                        seed = seed, 
+                        alpha = alpha, 
+                        theta = theta, 
+                        rho = rho, 
+                        beta = beta, 
+                        k = k, 
+                        sd_mu = sd_mu) 
 df_sf <- result$df
 df_raster <- result$raster
-writeRaster(df_raster, paste0(wd, '/data/20250202_sim_raster001.tif'), overwrite=TRUE)
+writeRaster(df_raster, paste0(wd, '/data/20250212_sim_raster001.tif'), overwrite=TRUE)

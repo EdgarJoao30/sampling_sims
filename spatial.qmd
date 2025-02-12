@@ -1,32 +1,8 @@
 ---
 title: "spatial"
-format: 
-  html:
-    page-layout: custom
+format: dashboard
 server: shiny
 ---
-
-```{r}
-#| panel: sidebar
-sliderInput("coff", "coff:", min = 1000, max = 10000, value = 1000)
-sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000))
-sliderInput("range", "range:", min = 1000, max = 5000, value = 3000)
-sliderInput("month", "month:", min = 1, max = 12, value = 1)
-sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
-sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
-
-```
-
-```{r}
-#| panel: fill
-#| layout: "[ [1,1], [1,1] ]"
-
-plotOutput("meshplot")
-plotOutput("lcplot")
-
-plotOutput("grfplot") 
-plotOutput("simplot")
-```
 
 
 ```{r, include = FALSE}
@@ -55,11 +31,15 @@ aligned_landcover <- terra::resample(landcover, rast(empty_raster), method = "ne
 mask <- rasterize(vect(boundary), aligned_landcover)
 hab_mask <- terra::mask(aligned_landcover, mask)
 hab_mask <- hab_mask %>% filter(Landcover_AllClass < 99)
+hab_mask <- round(hab_mask)
 df <- as.data.frame(hab_mask, xy=T)
 df$class <- factor(df$Landcover_AllClass)
 df$class <- plyr::revalue(df$class, c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
 df$class <- relevel(factor(df$class), ref = "Primary")
 df_sf <- st_as_sf(df, coords = c('x', 'y'), crs = 32650)
+
+sampling_points <- st_read(paste0(wd, '/data/20250129_points_sampling_scenarios_nobuffer.geojson'))
+sampling_grids <- st_read(paste0(wd, '/data/20250129_grids_sampling_scenarios_nobuffer.geojson'))
 
 k = 12
 # rho = 0.3
@@ -106,7 +86,6 @@ spatial_field <- reactive({
   df_sf
 })
 
-
 sim <- reactive({
     sp_field <- spatial_field()
     ccov <- factor(replicate(12, sp_field$class))
@@ -119,7 +98,7 @@ sim <- reactive({
     }
     binomial_sample <- apply(sp_field$mu, c(1, 2), generate_binomial)
     sp_field$mosq <- binomial_sample
-    sp_field$mosq[is.na(sp_field$mosq)] <- 0 # SEE WHY THE NAs
+    #sp_field$mosq[is.na(sp_field$mosq)] <- 0 # SEE WHY THE NAs
     sp_field
   })
 
@@ -159,11 +138,80 @@ output$simplot <- renderPlot({
     ggtitle('Anopheles count')+
     labs(fill = 'Value', x='', y='')+
     theme_minimal()+
-    scale_fill_gradient(low = "white", high = "red")+
+    scale_fill_gradient(low = "white", high = "red", limits = c(min(sim$mosq), max(sim$mosq)))+
     theme(axis.text.x = element_blank(), axis.text.y = element_blank())
 })
 
+sampling_g <- reactive({
+  iteration2 <- as.integer(input$iteration)
+  month2 <- as.integer(input$month_page2)
+  sample_size2 <- as.integer(input$sample_size)
+  
+  samp <- sampling_grids %>% dplyr::filter(iteration == iteration2, month == month2, sample_size == sample_size2)
+  samp
+})
 
+sampling_p <- reactive({
+  iteration2 <- as.integer(input$iteration)
+  month2 <- as.integer(input$month_page2)
+  sample_size2 <- as.integer(input$sample_size)
+  sampling_points %>% dplyr::filter(iteration == iteration2, month == month2, sample_size == sample_size2)
+})
+
+output$samplingplot <- renderPlot({
+  
+  
+  sp <- sampling_p()
+  sg <- sampling_g()
+  
+  ggplot() +
+    geom_sf(data = boundary, alpha = 0.5) +
+    geom_sf(data = sg) +
+    geom_sf(data = sp) +
+    facet_wrap(.~scenario)+
+    theme_minimal()
+  
+  
+})
 
 ```
 
+# Page 1
+
+```{r}
+#| panel: sidebar
+sliderInput("coff", "coff:", min = 1000, max = 10000, value = 1000)
+sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000))
+sliderInput("range", "range:", min = 1000, max = 5000, value = 3000)
+sliderInput("month", "month:", min = 1, max = 12, value = 1)
+sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
+sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
+```
+
+```{r}
+#| panel: fill
+#| layout: "[ [1,1], [1,1] ]"
+
+plotOutput("meshplot")
+plotOutput("lcplot")
+
+plotOutput("grfplot") 
+plotOutput("simplot")
+```
+
+
+
+# Page 2
+
+```{r}
+#| panel: sidebar
+sliderInput("iteration", "iteration", min = 1, max = 100, value = 1)
+sliderInput("month_page2", "month_page2", min = 1, max = 12, value = 1)
+selectInput("sample_size", "sample_size", c(5, 10, 15), 15)
+```
+
+```{r}
+#| panel: fill
+
+plotOutput("samplingplot")
+```

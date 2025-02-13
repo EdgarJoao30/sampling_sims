@@ -63,6 +63,7 @@ spatial_field <- reactive({
   rho <- input$rho
   sigma <- input$sigma
   range <- input$range
+  ar_type <- input$AR
   
   variance <- sigma^2
   kappa <- sqrt(8 * (alpha - 1)) / range
@@ -78,10 +79,29 @@ spatial_field <- reactive({
   true_field <- inla.qsample(k, Q, seed = seed)
   df_sf$field <- fm_evaluate(mesh, loc = df_sf, field = true_field)
   
-  df_sf$field_AR1 <- df_sf$field 
-  for (j in 2:k) {
-    df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+  # df_sf$field_AR1 <- df_sf$field 
+  
+  if (ar_type == 'Option 1') {
+    df_sf$field_AR1 <- df_sf$field 
+    for (j in 2:k) {
+       df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+    }
+  } else if (ar_type == 'Option 2') {
+    df_sf$field_AR1 <- df_sf$field / sqrt(1 - rho^2) 
+    for (j in 2:k) {
+       df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + df_sf$field[, j] / sqrt(1 - rho^2) 
+    }
+  } else if (ar_type == 'ARIMA') {
+    df_sf$field_AR1 <- df_sf$field 
+    for (i in 1:nrow(df_sf)) {
+       arima_values <- arima.sim(model = list(ar = 0.3), n = 12)
+       df_sf$field_AR1[i, ] <- df_sf$field_AR1[i, ] + arima_values
+    }
   }
+  
+  # for (j in 2:k) {
+  #   df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+  # }
   
   df_sf
 })
@@ -93,12 +113,12 @@ sim <- reactive({
     sd.mu <- 0.001
     mu <- beta[unclass(ccov)] + sp_field$field_AR1 + rnorm(n * k, 0, sd.mu)
     sp_field$mu <- exp(mu)
-    generate_binomial <- function(x) {
+    generate_nbinomial <- function(x) {
       rnbinom(mu= x, n=1, size=10) #### FLAG 2 - Change to poisson, to prevent competition with previous terms
     }
-    binomial_sample <- apply(sp_field$mu, c(1, 2), generate_binomial)
-    sp_field$mosq <- binomial_sample
-    #sp_field$mosq[is.na(sp_field$mosq)] <- 0 # SEE WHY THE NAs
+    nbinomial_sample <- apply(sp_field$mu, c(1, 2), generate_nbinomial)
+    sp_field$mosq <- nbinomial_sample
+    #sp_field$mosq[is.na(sp_field$mosq)] <- 0 # SEE WHY THE NAs... SOLVED
     sp_field
   })
 
@@ -126,7 +146,7 @@ output$grfplot <- renderPlot({
     ggtitle('GMRF')+
     labs(fill = 'Value', x='', y='')+
     theme_minimal()+
-    scale_fill_gradient(low = "white", high = "blue")+
+    scale_fill_gradient(low = "white", high = "blue", limits = c(min(gf$field_AR1), max(gf$field_AR1)))+
     theme(axis.text.x = element_blank(), axis.text.y = element_blank())
 })
 
@@ -174,6 +194,37 @@ output$samplingplot <- renderPlot({
   
 })
 
+
+autocorrelation <- reactive({
+  sp <- spatial_field()
+  compute_acf <- function(x, max_lag = 12) {
+    acf_values <- acf(x, plot = FALSE, lag.max = max_lag)$acf
+    return(acf_values)
+  }
+  acf_values <- apply(sp$field_AR1, 1, compute_acf)
+  sd_acf <- apply(acf_values, 1, sd)
+  mean_acf <- apply(acf_values, 1, mean)
+  
+  data <- data.frame(
+    Index = 1:length(mean_acf),
+    Mean = mean_acf,
+    SD = sd_acf
+  )
+  
+  data
+})
+
+output$acplot <- renderPlot({
+  autocorrelation_data <- autocorrelation()
+  
+  ggplot(autocorrelation_data, aes(x = Index, y = Mean)) +
+    geom_line(color = "blue") +
+    geom_ribbon(aes(ymin = Mean - 2 * SD, ymax = Mean + 2 * SD), alpha = 0.2, fill = "blue") +
+    scale_x_continuous(breaks = 1:12, labels = 0:11) + 
+    labs(title = "Mean Values with ±2 Standard Deviations", x = "Index", y = "Value") +
+    theme_minimal()
+})
+
 ```
 
 # Page 1
@@ -185,18 +236,21 @@ sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000
 sliderInput("range", "range:", min = 1000, max = 5000, value = 3000)
 sliderInput("month", "month:", min = 1, max = 12, value = 1)
 sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
+selectInput("AR", "AR", c('Option 1', 'Option 2', 'ARIMA'))
 sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
 ```
 
 ```{r}
 #| panel: fill
-#| layout: "[ [1,1], [1,1] ]"
+#| layout: "[ [1,1], [1,1], [1] ]"
 
 plotOutput("meshplot")
 plotOutput("lcplot")
 
 plotOutput("grfplot") 
 plotOutput("simplot")
+
+plotOutput("acplot")
 ```
 
 

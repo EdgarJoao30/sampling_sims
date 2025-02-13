@@ -64,10 +64,25 @@ generate_data <- function(boundary,
   df_sf$field <- fm_evaluate(mesh, loc = df_sf, field = true_field)
   
   # Compute AR1
-  df_sf$field_AR1 <- df_sf$field 
+  
+  # OPTION 1
+  df_sf$field_AR1 <- df_sf$field
   for (j in 2:n) {
-    df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+    df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]
   }
+  
+  # OPTION 2
+  # df_sf$field_AR1 <- df_sf$field / sqrt(1 - rho^2)
+  # for (j in 2:k) {
+  #   df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + df_sf$field[, j] / sqrt(1 - rho^2)
+  # }
+  
+  # OPTION ARIMA
+  # df_sf$field_AR1 <- df_sf$field
+  # for (i in 1:nrow(df_sf)) {
+  #   arima_values <- arima.sim(model = list(ar = 0.3), n = 12)
+  #   df_sf$field_AR1[i, ] <- df_sf$field_AR1[i, ] + arima_values
+  # }
   
   # Add regression covariates
   ccov <- factor(replicate(k, df_sf$class))
@@ -75,13 +90,13 @@ generate_data <- function(boundary,
   mu <- beta[unclass(ccov)] + df_sf$field_AR1 + rnorm(n * k, 0, sd_mu)
   df_sf$mu <- exp(mu)
   
-  generate_binomial <- function(x) {
+  generate_nbinomial <- function(x) {
     rnbinom(mu = x, n = 1, size = 10)
   }
   
-  binomial_sample <- apply(df_sf$mu, c(1, 2), generate_binomial)
+  nbinomial_sample <- apply(df_sf$mu, c(1, 2), generate_nbinomial)
   
-  df_sf$mosq <- binomial_sample
+  df_sf$mosq <- nbinomial_sample
   # df_sf$mosq[is.na(df_sf$mosq)] <- 0
   
   
@@ -99,13 +114,38 @@ generate_data <- function(boundary,
 result <- generate_data(boundary,
                         aligned_landcover,
                         df_sf, 
-                        seed = seed, 
+                        seed = 0, 
                         alpha = alpha, 
                         theta = theta, 
-                        rho = rho, 
+                        rho = 0.3, 
                         beta = beta, 
                         k = k, 
                         sd_mu = sd_mu) 
 df_sf <- result$df
 df_raster <- result$raster
+rasters <- c(df_raster, df_raster_2)
 writeRaster(df_raster, paste0(wd, '/data/20250212_sim_raster001.tif'), overwrite=TRUE)
+
+
+
+compute_acf <- function(x, max_lag = 12) {
+  acf_values <- acf(x, plot = FALSE, lag.max = max_lag)$acf
+  return(acf_values)
+}
+
+acf_values <- apply(df_sf$field_AR1, 1, compute_acf)
+
+sd_acf <- apply(acf_values, 1, sd)
+mean_acf <- apply(acf_values, 1, mean)
+
+data <- data.frame(
+  Index = 1:length(mean_acf),
+  Mean = mean_acf,
+  SD = sd_acf
+)
+
+ggplot(data, aes(x = Index, y = Mean)) +
+  geom_line(color = "blue") +
+  geom_ribbon(aes(ymin = Mean - 2 * SD, ymax = Mean + 2 * SD), alpha = 0.2, fill = "blue") +
+  labs(title = "Mean Values with ±2 Standard Deviations", x = "Index", y = "Value") +
+  theme_minimal()

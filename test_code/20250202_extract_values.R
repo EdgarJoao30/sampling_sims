@@ -10,7 +10,7 @@ wd <- '~/OneDrive - University of Glasgow/PhD/0_simulations'
 df <- st_read(paste0(wd, '/data/20250129_points_sampling_scenarios_nobuffer.geojson'))
 boundary <- st_read(paste0(wd, '/data/20240312_ROI_4326.shp')) |> st_union() |> st_transform(crs = 32650) 
 boundary_sp <- as(boundary, "Spatial")
-r <- rast(paste0(wd, '/data/20250202_sim_raster001.tif'))
+r <- rast(paste0(wd, '/data/20250212_sim_raster001.tif'))
 landcover <- rast(paste0(wd, '/data/Landcover_AllClass.tif')) %>% project(crs(boundary)) %>% raster::crop(boundary)
 boundary_extent <- extent(boundary_sp)
 empty_raster <- raster::raster(boundary_extent, res = 500, crs = crs(boundary_sp))
@@ -63,4 +63,4 @@ for (m in 1:12) {
 
 df_all <- do.call(rbind, dfs)
 
-st_write(df_all, paste0(wd, '/data/20250205_points_sampling_scenarios_alldata.geojson'), append = F)
+st_write(df_all, paste0(wd, '/data/20250219_points_sampling_scenarios_alldata.geojson'), append = F)

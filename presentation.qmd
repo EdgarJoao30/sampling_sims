@@ -1,0 +1,27 @@
+---
+title: "Assessing sampling designs using bayesian inference"
+author: "Edgar Manrique"
+format: 
+  beamer: 
+    aspectratio: 169
+    navigation: horizontal
+    theme: metropolis
+---
+
+## Getting up
+
+::::: columns
+::: {.column width="40%"}
+contents...
+:::
+
+::: {.column width="60%"}
+contents...
+:::
+:::::
+
+## Model definition
+
+-   Get in bed
+-   Count sheep
+-   $$ \operatorname{Tor}_i(\operatorname{colim}_\alpha M_\alpha, N) = \operatorname{colim}_\alpha\operatorname{Tor}_i(M_\alpha,N) $$

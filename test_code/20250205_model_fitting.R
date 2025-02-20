@@ -5,6 +5,9 @@ library(terra)
 library(tidyterra)
 library(tmap)
 library(raster)
+library(inlabru)
+library(fmesher)
+library(INLA)
 wd <- '~/OneDrive - University of Glasgow/PhD/0_simulations'
 # Landcover
 boundary <- st_read(paste0(wd, '/data/20240312_ROI_4326.shp')) |> st_union() |> st_transform(crs = 32650) 
@@ -17,7 +20,7 @@ mask <- rasterize(vect(boundary), aligned_landcover)
 landcover_mask <- terra::mask(aligned_landcover, mask)
 landcover_mask <- landcover_mask %>% filter(Landcover_AllClass < 99)
 # Simulations
-simulations <- rast(paste0(wd, '/data/20250202_sim_raster001.tif'))
+simulations <- rast(paste0(wd, '/data/20250212_sim_raster001.tif'))
 simulations <- st_as_sf(as.data.frame(simulations, xy=T), crs = 32650, coords = c('x', 'y'))
 lc_values <- terra::extract(landcover_mask, simulations, xy = T)
 simulations$cat_500m <- round(lc_values$Landcover_AllClass)
@@ -43,7 +46,7 @@ sim_long <- sim_long %>%
          )
 sim_long$month <- as.numeric(sim_long$month)
 # Samples
-samples <- st_read(paste0(wd, '/data/20250205_points_sampling_scenarios_alldata.geojson'))
+samples <- st_read(paste0(wd, '/data/20250219_points_sampling_scenarios_alldata.geojson'))
 samples$cat_500m <- plyr::revalue(as.character(samples$cat_500m), c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
 samples$cat_500m <- relevel(factor(samples$cat_500m), ref = "Primary")
 land_category_dummies <- model.matrix(~ cat_500m - 1, data = samples)
@@ -54,55 +57,48 @@ test <- samples %>% dplyr::filter(iteration == 1, scenario == 'c', sample_size =
 mesh <- fm_mesh_2d(simulations, max.edge = c(2500, 5000), cutoff = 1000)
 matern <- inla.spde2.matern(mesh, alpha = 2, constr = T)
 
-model <- sim_anoph ~ fixed_effects(cat_500mPrimary +
-                                     cat_500mBuilt +
-                                     cat_500mOil +
-                                     cat_500mPlantation +
-                                     cat_500mSecondary, model = 'fixed') +
-                    field(geometry, model = matern) +
-                    time(month, model = "ar1")
+# model <- sim_anoph ~ land_cover(cat_500m, model = 'factor_contrast') +
+#   #Intercept(1) + 
+#   field(geometry, model = matern) +
+#   time(month, model = "ar1")
 
-# model <- sim_anoph ~ fixed_effects(cat_500m, model = 'factor_contrast') + 
-#   field(geometry, model = matern) + 
-#   time(month, model = "ar1") 
+model <- sim_anoph ~ -1 + 
+  land_cover(cat_500m, model = 'factor_full') +
+  field(geometry, model = matern) +
+  time(month, model = "ar1")
 
 fit <- bru(model, test, family = "nbinomial",
            options = list(control.family = list(link = "log"), 
                           control.compute = list(dic = TRUE, cpo = TRUE, config=T, dic = TRUE, waic = TRUE)
                           ))
-summary <- summary(fit)
-summary$bru_info$components
-
 pred <- predict(
   fit, sim_long,
-  ~  fixed_effects + field + time
+  ~  exp(land_cover + field + time )
 )
 
 samp <- generate(fit, sim_long,
-                 ~  fixed_effects + field + time,
+                 ~  exp(land_cover + field + time),
                  n.samples = 1
 )
 
-
-
 pred$sample <- samp[, 1]
 
-summary(pred$mean)
+summary(pred$sample)
 
 pl_truth <- ggplot() +
-  gg(pred, aes(fill = sim), geom = "tile") +
+  gg(pred %>% filter(month == 1), aes(fill = sim), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Simulated")
 
 pl_posterior_mean <- ggplot() +
-  gg(pred, aes(fill = mean), geom = "tile") +
+  gg(pred %>% filter(month == 1), aes(fill = mean), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Posterior mean")
 
 pl_posterior_sample <- ggplot() +
-  gg(pred, aes(fill = sample), geom = "tile") +
+  gg(pred %>% filter(month == 1), aes(fill = sample), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Posterior sample")
@@ -115,12 +111,32 @@ colsc <- function(...) {
   )
 }
 
-csc <- colsc(pred$mean, pred$sample)
+csc <- colsc(pred$sim, pred$mean, pred$sample)
 
-multiplot(#pl_truth + csc,
+multiplot(pl_truth + csc,
           pl_posterior_mean + csc,
           pl_posterior_sample + csc,
-          cols = 2
+          cols = 3
 )
 
+spde.range <- spde.posterior(fit, "field", what = "range")
+spde.logvar <- spde.posterior(fit, "field", what = "log.variance")
+range.plot <- plot(spde.range)
+var.plot <- plot(spde.logvar)
+
+multiplot(range.plot, var.plot)
+
+corplot <- plot(spde.posterior(fit, "field", what = "matern.correlation"))
+covplot <- plot(spde.posterior(fit, "field", what = "matern.covariance"))
+multiplot(covplot, corplot)
+
+
+flist <- vector("list", NROW(fit$summary.random$land_cover))
+for (i in seq_along(flist)) flist[[i]] <- plot(fit, "land_cover", index = i)
+multiplot(plotlist = flist, cols = 3)
+
+# test delete
+library(MASS)
+model_test <- glm.nb(sim_anoph ~ cat_500m, data = test)
+predictions <- predict(model_test, newdata = sim_long, type = "response")
 

@@ -43,7 +43,7 @@ sampling_grids <- st_read(paste0(wd, '/data/20250129_grids_sampling_scenarios_no
 
 k = 12
 # rho = 0.3
-beta <- c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377)
+beta <- c(0, 0.4567584, 1.5648494, 1.0986123, 1.8282377) # guess 1: Primary, Built, Oil palm, Other plantation, Secondary
 # sigma <- 0.5
 # variance <- sigma^2
 alpha <- 2
@@ -63,7 +63,6 @@ spatial_field <- reactive({
   rho <- input$rho
   sigma <- input$sigma
   range <- input$range
-  ar_type <- input$AR
   
   variance <- sigma^2
   kappa <- sqrt(8 * (alpha - 1)) / range
@@ -79,30 +78,28 @@ spatial_field <- reactive({
   true_field <- inla.qsample(k, Q, seed = seed)
   df_sf$field <- fm_evaluate(mesh, loc = df_sf, field = true_field)
   
-  # df_sf$field_AR1 <- df_sf$field 
-  
-  if (ar_type == 'Option 1') {
-    df_sf$field_AR1 <- df_sf$field 
-    for (j in 2:k) {
-       df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
-    }
-  } else if (ar_type == 'Option 2') {
-    df_sf$field_AR1 <- df_sf$field / sqrt(1 - rho^2) 
-    for (j in 2:k) {
-       df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + df_sf$field[, j] / sqrt(1 - rho^2) 
-    }
-  } else if (ar_type == 'ARIMA') {
-    df_sf$field_AR1 <- df_sf$field 
-    for (i in 1:nrow(df_sf)) {
-       arima_values <- arima.sim(model = list(ar = 0.3), n = 12)
-       df_sf$field_AR1[i, ] <- df_sf$field_AR1[i, ] + arima_values
-    }
-  }
-  
-  # for (j in 2:k) {
-  #   df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+  df_sf$field_AR1 <- df_sf$field
+  for (j in 2:k) {
+    df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]
+  }  
+  # if (ar_type == 'Option 1') {
+  #   df_sf$field_AR1 <- df_sf$field 
+  #   for (j in 2:k) {
+  #      df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + sqrt(1 - rho^2) * df_sf$field[, j]  
+  #   }
+  # } else if (ar_type == 'Option 2') {
+  #   df_sf$field_AR1 <- df_sf$field / sqrt(1 - rho^2) 
+  #   for (j in 2:k) {
+  #      df_sf$field_AR1[, j] <- rho * df_sf$field_AR1[, j - 1] + df_sf$field[, j] / sqrt(1 - rho^2) 
+  #   }
+  # } else if (ar_type == 'ARIMA') {
+  #   df_sf$field_AR1 <- df_sf$field 
+  #   for (i in 1:nrow(df_sf)) {
+  #      arima_values <- arima.sim(model = list(ar = 0.3), n = 12)
+  #      df_sf$field_AR1[i, ] <- df_sf$field_AR1[i, ] + arima_values
+  #   }
   # }
-  
+
   df_sf
 })
 
@@ -179,8 +176,6 @@ sampling_p <- reactive({
 })
 
 output$samplingplot <- renderPlot({
-  
-  
   sp <- sampling_p()
   sg <- sampling_g()
   
@@ -190,8 +185,6 @@ output$samplingplot <- renderPlot({
     geom_sf(data = sp) +
     facet_wrap(.~scenario)+
     theme_minimal()
-  
-  
 })
 
 
@@ -225,9 +218,120 @@ output$acplot <- renderPlot({
     theme_minimal()
 })
 
+###--- Model fitting
+# Simulations
+simulations <- rast(paste0(wd, '/data/20250212_sim_raster001.tif'))
+simulations <- st_as_sf(as.data.frame(simulations, xy=T), crs = 32650, coords = c('x', 'y'))
+lc_values <- terra::extract(hab_mask, simulations, xy = T)
+simulations$cat_500m <- round(lc_values$Landcover_AllClass)
+simulations$cat_500m <- plyr::revalue(as.character(simulations$cat_500m), c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
+simulations$cat_500m <- relevel(factor(simulations$cat_500m), ref = "Primary")
+
+sim_long <- gather(simulations, key = 'month', value = 'sim', -c(cat_500m:geometry))
+sim_long <- sim_long %>% 
+  mutate(month = replace(month, month == 'jan', 1),
+         month = replace(month, month == 'feb', 2),
+         month = replace(month, month == 'mar', 3),
+         month = replace(month, month == 'apr', 4),
+         month = replace(month, month == 'may', 5),
+         month = replace(month, month == 'jun', 6),
+         month = replace(month, month == 'jul', 7),
+         month = replace(month, month == 'aug', 8),
+         month = replace(month, month == 'sep', 9),
+         month = replace(month, month == 'oct', 10),
+         month = replace(month, month == 'nov', 11),
+         month = replace(month, month == 'dec', 12)
+         )
+sim_long$month <- as.numeric(sim_long$month)
+# Samples
+samples <- st_read(paste0(wd, '/data/20250219_points_sampling_scenarios_alldata.geojson'))
+samples$cat_500m <- plyr::revalue(as.character(samples$cat_500m), c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
+samples$cat_500m <- relevel(factor(samples$cat_500m), ref = "Primary")
+
+samples_filtered <- reactive({
+  i <- as.integer(input$iteration_page3)
+  s <- as.integer(input$sample_size_page3)
+  e <- input$sampling_strategy
+  
+  samp <- samples %>% dplyr::filter(iteration == i, sample_size == s, scenario == e)
+  samp
+})
+
+mesh <- fm_mesh_2d(simulations, max.edge = c(2500, 5000), cutoff = 1000)
+matern <- inla.spde2.matern(mesh, alpha = 2, constr = T)
+
+model <- sim_anoph ~ -1 + 
+  land_cover(cat_500m, model = 'factor_full') +
+  field(geometry, model = matern) +
+  time(month, model = "ar1")
+
+preds <- reactive({
+  samp <- samples_filtered()
+  fit <- bru(model, samp, family = "nbinomial",
+             options = list(control.family = list(link = "log"), 
+                            control.compute = list(dic = TRUE, cpo = TRUE, config=T, dic = TRUE, waic = TRUE)
+             ))
+  pred <- predict(fit, sim_long, ~  exp(land_cover + field + time))
+  samp <- generate(fit, sim_long, ~  exp(land_cover + field + time), n.samples = 1)
+  pred$sample <- rnbinom(n = length(samp[, 1]), size = fit$summary.hyperpar$mean[1], mu = samp[, 1])
+  list(fit, pred)
+})
+
+output$posterior_map <- renderPlot({
+  pred_df <- preds()
+  pred_df <- pred_df[[2]]
+  m <- input$month_page3
+  pred_df <- pred_df %>% filter(month == m)
+  
+  pl_truth <- ggplot() +
+    gg(pred_df, aes(fill = sim), geom = "tile") +
+    facet_wrap( ~ month, nrow = 3) +
+    gg(boundary_sp, alpha = 0) +
+    ggtitle("Simulated")
+  
+  pl_posterior_mean <- ggplot() +
+    gg(pred_df, aes(fill = mean), geom = "tile") +
+    facet_wrap( ~ month, nrow = 3) +
+    gg(boundary_sp, alpha = 0) +
+    ggtitle("Posterior mean")
+  
+  pl_posterior_sample <- ggplot() +
+    gg(pred_df, aes(fill = sample), geom = "tile") +
+    facet_wrap( ~ month, nrow = 3) +
+    gg(boundary_sp, alpha = 0) +
+    ggtitle("Posterior sample")
+  
+  # Common colour scale for the truth and estimate:
+  colsc <- function(...) {
+    scale_fill_gradientn(
+      colours = rev(RColorBrewer::brewer.pal(11, "RdYlBu")),
+      limits = range(..., na.rm = TRUE)
+    )
+  }
+  
+  csc <- colsc(pred_df$sim, pred_df$mean, pred_df$sample)
+  
+  multiplot(pl_truth + csc,
+            pl_posterior_mean + csc,
+            pl_posterior_sample + csc,
+            cols = 3
+  )
+})
+
+output$posterior_range <- renderPlot({
+  fit <- preds()
+  fit <- fit[[1]]
+  
+  spde.range <- spde.posterior(fit, "field", what = "range")
+  spde.logvar <- spde.posterior(fit, "field", what = "log.variance")
+  range.plot <- plot(spde.range)
+  var.plot <- plot(spde.logvar)
+  
+  multiplot(range.plot, var.plot)
+})
 ```
 
-# Page 1
+# Simulations
 
 ```{r}
 #| panel: sidebar
@@ -236,7 +340,7 @@ sliderInput("mx_edge", "mx_edge:", min = 1000, max = 10000, value = c(2500, 5000
 sliderInput("range", "range:", min = 1000, max = 5000, value = 3000)
 sliderInput("month", "month:", min = 1, max = 12, value = 1)
 sliderInput("rho", "rho:", min = 0, max = 1, value = 0.3)
-selectInput("AR", "AR", c('Option 1', 'Option 2', 'ARIMA'))
+# selectInput("AR", "AR", c('Option 1', 'Option 2', 'ARIMA'))
 sliderInput("sigma", "sigma:", min = 0.1, max = 2, value = 0.5)
 ```
 
@@ -255,7 +359,7 @@ plotOutput("acplot")
 
 
 
-# Page 2
+# Sampling strategies
 
 ```{r}
 #| panel: sidebar
@@ -268,4 +372,22 @@ selectInput("sample_size", "sample_size", c(5, 10, 15), 15)
 #| panel: fill
 
 plotOutput("samplingplot")
+```
+
+
+# Model fitting
+
+```{r}
+#| panel: sidebar
+selectInput("sampling_strategy", "sampling_strategy", c('a', 'b', 'c', 'd', 'e', 'f'), 'c')
+sliderInput("iteration_page3", "iteration_page3", min = 1, max = 100, value = 1)
+sliderInput("month_page3", "month_page3", min = 1, max = 12, value = 1)
+selectInput("sample_size_page3", "sample_size_page3", c(5, 10, 15), 15)
+```
+
+```{r}
+#| panel: fill
+
+plotOutput("posterior_map")
+plotOutput("posterior_range")
 ```

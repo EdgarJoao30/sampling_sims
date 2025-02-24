@@ -8,20 +8,64 @@ format:
     theme: metropolis
 ---
 
-## Getting up
+## Objectives
+
+To evaluate sampling regimes, we assessed both the inference abilities (i.e., how well the designs identify the relationship between the outcome of interest and covariates) and predictive abilities (i.e., how accurately the designs predict the outcome of interest compared to the ‘true’ values in space and time).
+
+a.  Evaluate optimal sampling strategies for predicting vector distribution across a heterogenous landscape.
+b.  Assess whether a single sampling design can adequately describe multiple key species.
+
+## Modeling biting rate $Y_{i}$
+
+-   $Y_i \mid \mu_i, k \sim \operatorname{NegBinomial}\left(\mu_{i}, k\right)$
+
+-   $\operatorname{log}\left(\mu_{it}\right)= L^T \boldsymbol{\beta} + s\left(\mathbf{x}_i\right) + t\left(\mathbf{x}_t\right)$
+
+-   $\boldsymbol{\beta} = \left[ \beta_{OilPalm},   \beta_{SecForest},  \beta_{PrimForest}, \beta_{OtherPlant}, \beta_{Built-up}\right]$
+
+![](~/Documents/GitHub/sampling_sims/images/image1_landcover.jpeg){fig-align="center" width="275"}
+
+## Spatial random effect
+
+-   $s\left(\mathbf{x}_i\right) \mid \theta \sim GF(0, \Sigma)$
+
+-   $\operatorname{Cov}\left(s\left(\mathbf{x}_i\right), s\left(\mathbf{x}_j\right)\right)=\frac{\sigma^2}{2^{\nu-1} \Gamma(\nu)}\left(\kappa\left\|\mathbf{x}_i-\mathbf{x}_j\right\|\right)^\nu K_\nu\left(\kappa\left\|\mathbf{x}_i-\mathbf{x}_j\right\|\right)$
+
+![](~/Documents/GitHub/sampling_sims/images/image2_gaussianfield.jpeg){fig-align="center" width="275"}
+
+## Temporal random effect
 
 ::::: columns
 ::: {.column width="40%"}
-contents...
+-   $X_t=\varphi X_{t-1}+\varepsilon_t$
 :::
 
 ::: {.column width="60%"}
-contents...
+![](~/Documents/GitHub/sampling_sims/images/image3_gaussianfield_ar1.jpeg)
 :::
 :::::
 
-## Model definition
+## Simulated surfaces
 
--   Get in bed
--   Count sheep
--   $$ \operatorname{Tor}_i(\operatorname{colim}_\alpha M_\alpha, N) = \operatorname{colim}_\alpha\operatorname{Tor}_i(M_\alpha,N) $$
+::::: columns
+::: {.column width="50%"}
+-   $Y_i \mid \mu_i, k \sim \operatorname{NegBinomial}\left(\mu_{i}, k\right)$
+
+-   $\operatorname{log}\left(\mu_{it}\right)= L^T \boldsymbol{\beta} + s\left(\mathbf{x}_i\right) + t\left(\mathbf{x}_t\right)$
+
+![](~/Documents/GitHub/sampling_sims/images/image5_sim_density.jpeg)
+:::
+
+::: {.column width="50%"}
+![](~/Documents/GitHub/sampling_sims/images/image4_sim_mosq.jpeg)
+:::
+:::::
+
+## Sampling strategies
+
+| Strategy | Number of sites | Strategy | Number of sites |
+|------------------|------------------|------------------|------------------|
+| a\. fixed | 5, 10, 15 fixed sites, same each month | d\. stratified random | 5, 10, 15 stratified random sites, equally distributed per land cover class each month |
+| b\. uniform (equally spaced) | 5, 10, 15 equally spaced sites, fixed position each month | e\. fixed-random | 5 fixed + 5, 10 random each month |
+| c\. random | 5, 10, 15 random sites, changing each month | f\. fixed-stratified | 5 fixed + 5, 10 stratified random |
+

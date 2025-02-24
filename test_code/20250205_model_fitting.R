@@ -3,7 +3,6 @@ library(sf)
 library(tidyverse)
 library(terra)
 library(tidyterra)
-library(tmap)
 library(raster)
 library(inlabru)
 library(fmesher)
@@ -26,8 +25,8 @@ lc_values <- terra::extract(landcover_mask, simulations, xy = T)
 simulations$cat_500m <- round(lc_values$Landcover_AllClass)
 simulations$cat_500m <- plyr::revalue(as.character(simulations$cat_500m), c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
 simulations$cat_500m <- relevel(factor(simulations$cat_500m), ref = "Primary")
-land_category_dummies <- model.matrix(~ cat_500m - 1, data = simulations)
-simulations <- cbind(simulations, land_category_dummies)
+# land_category_dummies <- model.matrix(~ cat_500m - 1, data = simulations)
+# simulations <- cbind(simulations, land_category_dummies)
 
 sim_long <- gather(simulations, key = 'month', value = 'sim', -c(cat_500m:geometry))
 sim_long <- sim_long %>% 
@@ -49,8 +48,8 @@ sim_long$month <- as.numeric(sim_long$month)
 samples <- st_read(paste0(wd, '/data/20250219_points_sampling_scenarios_alldata.geojson'))
 samples$cat_500m <- plyr::revalue(as.character(samples$cat_500m), c("0"="Oil", "1"="Secondary", "2"="Primary", "3"="Plantation", "4"="Built"))
 samples$cat_500m <- relevel(factor(samples$cat_500m), ref = "Primary")
-land_category_dummies <- model.matrix(~ cat_500m - 1, data = samples)
-samples <- cbind(samples, land_category_dummies)
+# land_category_dummies <- model.matrix(~ cat_500m - 1, data = samples)
+# samples <- cbind(samples, land_category_dummies)
 
 test <- samples %>% dplyr::filter(iteration == 1, scenario == 'c', sample_size == 15)
 
@@ -62,6 +61,11 @@ matern <- inla.spde2.matern(mesh, alpha = 2, constr = T)
 #   field(geometry, model = matern) +
 #   time(month, model = "ar1")
 
+comps <- ~ 
+  land_cover(cat_500m, model = 'factor_full') +
+  field(geometry, model = matern) +
+  time(month, model = "ar1")
+
 model <- sim_anoph ~ -1 + 
   land_cover(cat_500m, model = 'factor_full') +
   field(geometry, model = matern) +
@@ -71,34 +75,52 @@ fit <- bru(model, test, family = "nbinomial",
            options = list(control.family = list(link = "log"), 
                           control.compute = list(dic = TRUE, cpo = TRUE, config=T, dic = TRUE, waic = TRUE)
                           ))
-pred <- predict(
-  fit, sim_long,
-  ~  exp(land_cover + field + time )
+
+fit_poi <- bru(
+  comps,
+  bru_obs(
+    family = "poisson", data = test,
+    formula = sim_anoph ~ -1 + land_cover + field + time
+  )
 )
+# Compute the expected values of the response variable
+pred <- predict(fit, sim_long, ~  exp(land_cover + field + time))
 
-samp <- generate(fit, sim_long,
-                 ~  exp(land_cover + field + time),
-                 n.samples = 1
+pred_poi <- predict(
+  fit_poi, sim_long,
+  ~ {
+    lambda <- exp(land_cover + field + time)
+    predicted <- rnbinom(n = nrow(sim_long), size = fit$summary.hyperpar$mean[1], mu = lambda)
+    d <- (predicted - sim)^2
+    rsd <- sqrt(sd(d))
+    
+    list(
+      df = lambda,
+      predicted = predicted,
+      rsd = rsd
+    )
+  },
+  n.samples = 100
 )
-
-pred$sample <- samp[, 1]
-
-summary(pred$sample)
+# Draw samples from the posterior distribution of the mean
+samp <- generate(fit, sim_long, ~  exp(land_cover + field + time), n.samples = 1)
+# Transform the generated values to integer counts using a negative binomial distribution
+pred$sample <- rnbinom(n = length(samp[, 1]), size = fit$summary.hyperpar$mean[1], mu = samp[, 1])
 
 pl_truth <- ggplot() +
-  gg(pred %>% filter(month == 1), aes(fill = sim), geom = "tile") +
+  gg(pred, aes(fill = sim), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Simulated")
 
 pl_posterior_mean <- ggplot() +
-  gg(pred %>% filter(month == 1), aes(fill = mean), geom = "tile") +
+  gg(pred, aes(fill = mean), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Posterior mean")
 
 pl_posterior_sample <- ggplot() +
-  gg(pred %>% filter(month == 1), aes(fill = sample), geom = "tile") +
+  gg(pred, aes(fill = sample), geom = "tile") +
   facet_wrap( ~ month, nrow = 3) +
   gg(boundary_sp, alpha = 0) +
   ggtitle("Posterior sample")
@@ -134,6 +156,38 @@ multiplot(covplot, corplot)
 flist <- vector("list", NROW(fit$summary.random$land_cover))
 for (i in seq_along(flist)) flist[[i]] <- plot(fit, "land_cover", index = i)
 multiplot(plotlist = flist, cols = 3)
+
+# Extract hyperparameters from the fitted model
+hyperparameters <- fit$summary.hyperpar
+
+# Create a data frame with the hyperparameters and their values
+hyper_df <- data.frame(
+  Parameter = rownames(hyperparameters),
+  Mean = hyperparameters$mean,
+  SD = hyperparameters$sd
+)
+
+# Create a function to generate density data for a normal distribution
+generate_density_data <- function(mean, sd, n = 1000) {
+  x <- seq(mean - 4 * sd, mean + 4 * sd, length.out = n)
+  y <- dnorm(x, mean = mean, sd = sd)
+  data.frame(x = x, y = y)
+}
+
+# Generate density data for each hyperparameter
+density_data <- hyper_df %>%
+  group_by(Parameter) %>%
+  do(generate_density_data(.$Mean, .$SD))
+
+# Plot the density of the hyperparameters using ggplot2
+pl_hyperparameters <- ggplot(density_data, aes(x = x, y = y)) +
+  geom_line() +
+  facet_wrap(~ Parameter, scales = "free") +
+  theme_minimal() +
+  #ggtitle("Density of Hyperparameters") +
+  ylab("pdf") +
+  xlab("Value")
+
 
 # test delete
 library(MASS)

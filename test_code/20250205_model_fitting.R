@@ -76,31 +76,31 @@ fit <- bru(model, test, family = "nbinomial",
                           control.compute = list(dic = TRUE, cpo = TRUE, config=T, dic = TRUE, waic = TRUE)
                           ))
 
-fit_poi <- bru(
+fit2 <- bru(
   comps,
   bru_obs(
-    family = "poisson", data = test,
+    family = "nbinomial", data = test,
     formula = sim_anoph ~ -1 + land_cover + field + time
   )
 )
 # Compute the expected values of the response variable
 pred <- predict(fit, sim_long, ~  exp(land_cover + field + time))
 
-pred_poi <- predict(
-  fit_poi, sim_long,
+pred2 <- predict(
+  fit2, sim_long,
   ~ {
-    lambda <- exp(land_cover + field + time)
-    predicted <- rnbinom(n = nrow(sim_long), size = fit$summary.hyperpar$mean[1], mu = lambda)
+    mu <- exp(land_cover + field + time)
+    predicted <- rnbinom(n = nrow(sim_long), size = fit$summary.hyperpar$mean[1], mu = mu)
     d <- (predicted - sim)^2
     rsd <- sqrt(sd(d))
     
     list(
-      df = lambda,
+      df = mu,
       predicted = predicted,
       rsd = rsd
     )
   },
-  n.samples = 100
+  n.samples = 1000
 )
 # Draw samples from the posterior distribution of the mean
 samp <- generate(fit, sim_long, ~  exp(land_cover + field + time), n.samples = 1)
